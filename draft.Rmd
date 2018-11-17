@@ -1,0 +1,320 @@
+---
+title: "Draft"
+author: "Blanka Zana"
+date: "20 September 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(pacman)
+pacman::p_load(metafor,lme4,brms,tidyverse,readbitmap,eyetrackingR,readr,groupdata2,ggplot2,tidyverse,lmerTest,lme4,MuMIn,data.table,jpeg,grid,tidyr,rethinking,gridExtra,readxl,effsize,metafor,pastecs)
+
+setwd("~/Denmark/Study/Semester V/big T/")
+
+saccades = read.csv("SaccadesDV.csv")
+fixations = read.csv("FixationsDV.csv")
+
+```
+
+## 
+
+```{r}
+
+#wait, what if it's in the saccades
+saccades = read.csv("SaccadesDV.csv")
+#yes it is
+#let's add then
+temp = select(saccades, Session, ID, Picture, CurrentRating)
+temp = temp %>% distinct
+temp1 = merge(fixations, temp)
+#well, for some reason, one line disappears
+#let's write a csvto save this dataframe
+write.csv(temp1, file = "Fixations1.csv")
+fixations = read.csv("Fixations1.csv")
+
+#let's remove data of participants who didn't do session 2
+fixations <- fixations[ !(fixations$ID %in% c(131, 136, 141, 230)), ]
+unique(fixations$ID) #cool, it worked
+#let's write a dataframe to have it ready to load in
+write.csv(fixations, file = "FixationsWOParticipants.csv")
+fixations = read.csv("FixationsWOParticipants.csv")
+
+#let's shape the dataframe into a form I use
+#does it count as conformity, if there was agreement in the first trial? I guess so
+#does it count as conformity if it is only going to the direction of the group opinion but higher/lower
+#if it's only the direction = tendency
+#if it's exact = conform
+#3rd column to include both
+#if current rating in session 2 == previous group rating then datafrma$conform = 1, otherwise 0
+session2$Conformity = NULL
+session2$PreviousGroupRating = as.numeric(session2$PreviousGroupRating)
+session2$CurrentRating = as.numeric(session2$CurrentRating)
+
+session2 = subset(fixations,Session == '2')
+#this includes also observations where there was agreement in the first place and they kept it
+#maybe would be interesting to look at how many cases they kept their ratings where there was no agreemnent
+conformed = filter(session2,  CurrentRating == PreviousGroupRating)
+#now the ones who REALLY conformed, AKA who have changed their opinion since the first round
+conformed1 = filter(session2,  CurrentRating == PreviousGroupRating & CurrentRating != PreviousRating)
+length(unique(conformed1$ID))
+
+length(unique(conformed$ID))
+unique(conformed$ID)
+#dafaq? one particpant makes the number of observations go from 27638 to 9551 pp 201, pic 20 sess 1 NO
+#Actually, he's the one who never really conformed. HERE I FILTER OBSERVATIONS, NOT PARTICIPANTS.
+#also dafaq: 72 changed their opinion to adjust in the second round, and only 1 has rated it the same in the first round
+#which means that 72 out of 76, 95% of the participants have conformed at some point
+# if current rating tends to go to the direction of previous group opinion, then the amount of adjustment (if it's
+#one higher and closer, +1, if it's lower and closer -1)
+
+#let's chek on pp 201
+
+weird=subset(fixations,ID=='201')
+#okay, it's only 5361 observations
+
+#so let's get back to: do people tend to keep their ratings in the sam matter when there's disagreement? let's check
+hmm = filter(session2, PreviousRating != PreviousGroupRating & PreviousRating == CurrentRating)
+hmmm = filter(session2,  CurrentRating == PreviousGroupRating & CurrentRating == PreviousRating)
+#okay, I should focus on the eyetracking part
+
+#so with the conformed dataset. I should add a column 'agreement' then merge with fixations
+session2$Agreement[session2$CurrentRating == session2$PreviousGroupRating] = 'Agreement'
+session2$Agreement[session2$CurrentRating != session2$PreviousGroupRating] = 'Disagreement'
+temp = select(session2, Session, ID, Picture, Agreement)
+temp = temp %>% distinct
+temp1 = merge(fixations, temp, all=T)
+fixations = temp1
+
+#now session 1
+session1$ID = as.factor(session1$ID)
+session1$Session = as.factor(session1$Session)
+session1$Picture = as.factor(session1$Picture)
+session1$Agreement = as.factor(session1$Agreement)
+
+session1 = subset(fixations, Session == '1')
+session1$Agreement[session1$CurrentRating == session1$CurrentGroupRating] = 'Agreement'
+session1$Agreement[session1$CurrentRating != session1$CurrentGroupRating] = 'Disagreement'
+temp = select(session1, Session, ID, Picture, Agreement)
+temp = temp %>% distinct
+total <- merge(session1,fixations,all = T)
+fixations = total
+meh = merge(session1, session2, all = T)
+#wait, I can just do all this in one
+fixations$Agreement[fixations$CurrentRating == fixations$CurrentGroupRating] = '1'
+fixations$Agreement[fixations$CurrentRating == fixations$PreviousGroupRating] = '1'
+fixations$Agreement[fixations$CurrentRating != fixations$CurrentGroupRating] = '0'
+fixations$Agreement[fixations$CurrentRating != fixations$PreviousGroupRating] = '0'
+#okay so for the hypothesis I should do a seperate column for pupil size during group rating?
+#1 is agreement, 0 is disagreement
+#I guess I just do it
+#how the heck can I specify the period between group rating start and the next 
+fixations$GroupPupil = fixations$Pupilsize[fixations$CURRENT_FIX_MSG_TEXT_1] =='grp_rating_starts'
+ggplot(fixations, aes(CURRENT_FIX_MSG_TEXT_1,PupilSize)) + geom_point() + facet_wrap(~Group)
+```
+
+## 
+
+Hypothesis I
+
+```{r}
+
+#i.	Pupil dilation - Pupils are expected to be more constricted compared to subject's first round (focus )
+
+model = glmer(Agreement ~ PupilSize.s + Event + (1|ID),family = binomial, fixations)
+
+model1 = glmer(Agreement ~ PupilSize.s * Event + FixationN + (1|ID),family = binomial, fixations)
+summary(model1)
+
+#rename second session current rating
+setnames(session2,'CurrentRating','SecondRating')
+session2$CurrentRating = '0'
+session1 = subset(fixations, Session == '1')
+session1$SecondRating = NA
+merged = merge(session1, session2, all = T)
+merged$PupilSize.s = scale(merged$PupilSize)
+write.csv(merged, file = 'FixationsV201.csv')
+df = read.csv('FixationsV201.csv')
+#let's save merged in a csv. this is the dataset without the ppl who only did the first, with the agreement variable and with the second rating variable
+#creted a variable called 'second rating'. Second rating for session 1 data is 0, and for session two it's the Current Rating. For session 1, current rating is the rating.
+fixations$SecondRating = as.numeric(fixations$SecondRating)
+model2 = glmer(SecondRating ~  PupilSize.s * Event  + (1|ID) + (1|Picture), family = gaussian (link = "identity"), merged)
+summary(model2)
+#just gonna change agreement for first roud to 10, to be able to diferentiate between first and second round agreement
+df$Agreement[df$CurrentRating == df$CurrentGroupRating] = '10'
+write.csv(df, file = 'FixationsV888.csv')
+
+
+
+
+#let's try bayesian
+
+fixations$PupilSize.s = scale(fixations$PupilSize)
+fixations$Agreement=='Agree' = '1'
+fixations$Agreement[fixations$Agreement=='Disagree'] = '0'
+fixations$Agreement = as.numeric(fixations$Agreement)
+
+
+#
+M1 <- brm(SecondRating ~ 1 + PupilSize.s * Event, 
+               data = fixations,iter = 1000, cores = 2, chain = 2)
+#1694 seconds
+summary(M1)
+
+
+df$CurrentRating = as.numeric(df$CurrentRating)
+df$CurrentGroupRating = as.numeric(df$CurrentGroupRating)
+df$PreviousGroupRating = as.numeric(df$PreviousGroupRating)
+df$PreviousRating = as.numeric(df$PreviousRating)
+df$Agreement_BI[df$CurrentRating == df$CurrentGroupRating] = '1'
+df$Agreement_BI[df$CurrentRating == df$PreviousGroupRating] = '1'
+df$Agreement_BI[df$CurrentRating != df$CurrentGroupRating] = '0'
+df$Agreement_BI[df$CurrentRating != df$PreviousGroupRating] = '0'
+write.csv(df, file = 'trial9999.csv')
+
+
+#ii.	Fewer but longer fixations and fewer but longer saccades [HIGHER DWELL TIMES]  compared to subject's first round 
+
+N fixations R2 ~ N fixations R1 * T fixations R1 * T fixations R2 + Correctness + (1|Subject)
+
+```
+
+Hypothesis II
+
+
+```{r}
+#2.)	Reaction to prediction error signal associated with conflict trials (change in the above listed  behavioural measurements) predicts adjustment in conformity 
+Conformity ~ |avgPupilSize round one - round two| + |N fixations round one - round two| + |T fixations round one-round two| + |N saccades round one -round two| + |T saccades round one-round two|
+  
+#let's create a mean for fixation number and durations 
+
+mean = group_by(df, ID,Picture, Session) %>%
+  summarise_each(funs(mean(. , na.rm= T)), Duration)
+setnames(mean, "Duration","mean_Duration")
+
+try=merge(mean,df, all = T)
+
+mean1 = group_by(df, ID, Picture, Session) %>%
+  summarise_each(funs(mean(. , na.rm = T)), PupilSize)
+setnames(mean1, "PupilSize", "mean_PupilSize")
+try = merge(mean1, try, all = T)
+
+mean2 = group_by(df, ID, Picture, Session) %>%
+  summarise_each(funs(max(. , na.rm = T)), FixationN)
+setnames(mean2, "FixationN", "max_FixationN")
+try = merge(mean2,try, all = T)
+
+write.csv(try, file = 'with_filtered_duration_fix.csv')
+
+# now Number of saccades and duration of saccades 
+saccades = read.csv("SaccadesDV.csv")
+#let's remove data of participants who didn't do session 2
+saccades <- saccades[ !(saccades$ID %in% c(131, 136, 141, 230, 211,229)), ]
+unique(saccades$ID)
+#filter saccades? 
+
+plot(density(saccades$Duration),xlim=c(0,300), ylim=c(0,1))
+plot(saccades$Amplitude)
+#dafaq
+mi = read.csv("SaccadesDV.csv")
+plot(mi$Amplitude)
+plot(saccades$Duration, xlim = c(0,10000), ylim = c(0,2000))
+mean(saccades$Duration)
+round(stat.desc(saccades$Duration),3)
+saccades$Duration = as.numeric(saccades$Duration)
+filtered = saccades[!rowSums(saccades[8] >600),]
+df = filtered
+
+sean = group_by(saccades, ID, Picture, Session) %>%
+  summarise_each(funs(mean(. , na.rm = T)), Duration)
+setnames(sean, "Duration", "mean_Duration_sacc")
+try = merge(sean, try, all = T)
+
+sean1 = group_by(saccades, ID, Picture, Session) %>%
+  summarise_each(funs(max(. , na.rm = T)), SaccadeN)
+setnames(sean1, "SaccadeN", "max_DurationN")
+try = merge(try,sean1, all = T)
+
+#get rid of the extra saccades
+try =try[!(is.na(try$Trial) | try$Trial=="NA"), ]
+
+#NOW WRITE A DATASET WITH FILTERED FIXATIONS, MEANS OF FIXATIONS, AND MEANS OF SACCADES FUCK YEEEEEE
+write.csv(try, file = "final.csv")
+
+sean = sean %>% distinct 
+sean = na.omit(sean)
+#I should filter out observations where some numbers are suuperhigh
+
+
+#so apparently the saccades ean df is longer that it is supposed to be so let's check things
+n_occur <- data.frame(table(sean$ID))
+n_occur[n_occur$Freq < 306,]
+sean[sean$ID %in% n_occur$Var1[n_occur$Freq > 306],] #THIS IS SO GREAT I LOVE IT SO MUCH
+
+#Var1 Freq
+#22  138  305
+#28  146  305
+#39  211  199***** #pparticipant 211 has very little data in the saccades-also in fixations - exclusion? also, exclusion of he pairless trials of 138 ans 146 
+ggplot(subset(df, ID == '211'),aes(Picture, Duration, colour = Session)) + geom_point() + facet_wrap(~Picture)
+
+#THIS IS FOR FIXATIONS
+n_occur1 <- data.frame(table(mean$ID))
+n_occur1[n_occur1$Freq < 306,]
+mean[sean$ID %in% n_occur1$Var1[n_occur1$Freq > 306],] #THIS IS STILL SO GREAT I LOVE IT SO MUCH
+
+# Var1 Freq
+#3   105  305
+#20  135  303
+#21  137  305
+#22  138  305
+#23  140  303
+#24  142  298***
+#28  146  300
+#29  147  302
+#36  205  269****
+#39  211  199***********
+#50  229  196******
+#51  231  305
+#55  235  305
+#61  241  305
+#66  246  301
+
+#what now
+
+#I'll delete particiapant 211 and 229 from both
+fixations <- fixations[ !(df$ID %in% c(229,211)), ]
+write.csv(df, file = 'deletedmore.csv')
+#redo means
+#but wait then i should filter high values first
+
+ggplot(df, aes(Duration)) + geom_density()
+plot(density(df$PupilSize))
+mean(df$Duration)
+median(df$Duration)
+getmode(df$Duration)
+# Create the function.
+getmode <- function(v) {
+   uniqv <- unique(v)
+   uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+
+#let's filter Durations that are above 600
+df$Duration = as.numeric(df$Duration)
+filtered = df[!rowSums(df[9] >600),]
+df = filtered
+#go back, redo means
+#first, write a csv
+write.csv(df, file = "filtered.csv" )
+df = read.csv("filtered.csv")
+df[,6] = NULL
+write.csv(try, file = "filteredmean_deletedppl.csv")
+
+
+df$mean_PupilSize = scale(df$mean_PupilSize.s)
+```
+
+
+Hypothe
+
+
+
